@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# requirements.txt  --  Python dependencies for the OCBC POC pipeline
+# ---------------------------------------------------------------------------
+# Only two packages are actually installed on the local authoring host; both
+# are imported LAZILY (inside functions) in src/common so the modules still
+# byte-compile and import even before these are present.
+#
+#   PyYAML  -> parse config/pipeline.yaml (the single source of truth)
+#   boto3   -> talk to S3 / Glue from the scripts and lineage/audit emitters
+PyYAML>=6.0
+boto3>=1.34
+
+# ---------------------------------------------------------------------------
+# pyspark is the EMR Serverless runtime engine. It is NOT installed locally
+# (this host has no Java/Spark), so it is listed here only for documentation /
+# optional local smoke testing. Pin to the 3.5.x line to match EMR's Spark 3.5.
+# Install manually (and Java) ONLY if you want to run the optional local Spark
+# smoke test -- the unit tests never need it.
+# pyspark==3.5.*

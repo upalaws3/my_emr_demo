@@ -1,0 +1,169 @@
+# ===========================================================================
+# config/pipeline.yaml  --  SINGLE SOURCE OF TRUTH for the OCBC POC pipeline
+# ===========================================================================
+# Everything that needs a deterministic name, a masking salt, a data-generator
+# row-count range, or a data-quality rule reads it from THIS file. The Spark
+# jobs read it via src/common/config_loader.py; the docs mirror it by hand.
+# Terraform does NOT read this YAML -- it mirrors the same logical names as
+# variables/locals (naming is deterministic from project + env, see design S2).
+# ===========================================================================
+
+# --- Deterministic base (design S2.1) -------------------------------------
+# name_prefix = "{project}-{env}" = "ocbc-poc-dev" drives every resource name.
+project: ocbc-poc
+env: dev
+region: ap-southeast-1
+
+# --- S3 buckets (design S2.2) ---------------------------------------------
+# These are BASE names. The AWS account id is appended at Terraform / runtime
+# so the globally-unique bucket becomes e.g. "ocbc-poc-dev-datalake-123456789012".
+# One data-lake bucket holds every medallion layer as a prefix; one separate
+# bucket holds Athena query results.
+buckets:
+  datalake: ocbc-poc-dev-datalake
+  athena_results: ocbc-poc-dev-athena-results
+
+# --- Glue databases (design S2.3) -----------------------------------------
+# One database per layer plus audit. Names use UNDERSCORES because Athena/Hive
+# identifiers disallow hyphens. Landing is created for AC4 but the jobs write
+# no managed tables into it (raw CSV/JSON only).
+databases:
+  landing: ocbc_poc_dev_landing
+  bronze: ocbc_poc_dev_bronze
+  silver: ocbc_poc_dev_silver
+  canonical: ocbc_poc_dev_canonical
+  gold: ocbc_poc_dev_gold
+  audit: ocbc_poc_dev_audit
+
+# --- PII masking (design S4) ----------------------------------------------
+# national_id is tokenized with SHA-256 over (salt + value). The salt is fixed
+# so the same customer always maps to the same token across runs (coherent
+# demo). Precedence at runtime: env PIPELINE_MASK_SALT > this value > hard fail.
+# A production system would use a KMS-backed key / tokenization vault instead.
+masking:
+  salt: ocbc-poc-demo-salt-2025
+
+# --- Synthetic data generator (design S3 row counts, Finding 8) -----------
+# Target row counts are declared ONCE here as [min, max] ranges and read by BOTH
+# the generator and the local-check assertion, so the check is deterministic.
+generator:
+  row_counts:
+    customers: [90, 110]      # ~100
+    accounts: [140, 160]      # ~150 (>= 1 per customer, some customers 2)
+    cards: [110, 130]         # ~120 (not every account has a card)
+    transactions: [700, 900]  # ~800; largest fact table but still POC-tiny
+
+# --- Data-quality rules (design S6.5) -------------------------------------
+# One subtree per table. Every expectation carries an explicit `severity` so a
+# demo can retune gating behaviour WITHOUT touching code. Severity is one of:
+#   critical -> a failure HALTS the pipeline at the silver DQ gate
+#   warn     -> a failure is recorded but the pipeline continues
+#
+# row_count>=1 severity policy (the "empty table" footgun, design S6.5):
+#   - transactions: CRITICAL  (an empty fact table makes the gold marts useless)
+#   - customers/accounts/cards: WARN (empty-but-valid is tolerated)
+dq_rules:
+
+  customers:
+    # The allowed country set lives in config (NOT hardcoded in the job) and
+    # matches exactly what the generator emits.
+    country_allowed: [SG, US, MY, GB, IN, AU]
+    expectations:
+      - name: customer_id_not_null
+        kind: not_null
+        column: customer_id
+        severity: critical
+      - name: customer_id_unique
+        kind: unique
+        columns: [customer_id]
+        severity: critical
+      - name: email_not_null
+        kind: not_null
+        column: email
+        severity: critical
+      - name: country_in_set
+        kind: in_set
+        column: country
+        severity: warn
+      - name: row_count_min
+        kind: row_count
+        params: { min: 1 }
+        severity: warn
+
+  accounts:
+    expectations:
+      - name: account_id_unique
+        kind: unique
+        columns: [account_id]
+        severity: critical
+      - name: customer_id_referential
+        kind: referential
+        column: customer_id
+        params: { ref_table: customers, ref_col: customer_id }
+        severity: critical
+      - name: balance_range
+        kind: range
+        column: balance
+        params: { min: -10000 }
+        severity: warn
+      - name: status_in_set
+        kind: in_set
+        column: status
+        params: { allowed: [ACTIVE, DORMANT, CLOSED] }
+        severity: warn
+      - name: row_count_min
+        kind: row_count
+        params: { min: 1 }
+        severity: warn
+
+  cards:
+    expectations:
+      - name: card_id_unique
+        kind: unique
+        columns: [card_id]
+        severity: critical
+      - name: account_id_referential
+        kind: referential
+        column: account_id
+        params: { ref_table: accounts, ref_col: account_id }
+        severity: critical
+      - name: card_type_in_set
+        kind: in_set
+        column: card_type
+        params: { allowed: [VISA, MASTERCARD, AMEX] }
+        severity: warn
+      - name: expiry_month_range
+        kind: range
+        column: expiry_month
+        params: { min: 1, max: 12 }
+        severity: warn
+      - name: row_count_min
+        kind: row_count
+        params: { min: 1 }
+        severity: warn
+
+  transactions:
+    expectations:
+      - name: transaction_id_unique
+        kind: unique
+        columns: [transaction_id]
+        severity: critical
+      - name: account_id_referential
+        kind: referential
+        column: account_id
+        params: { ref_table: accounts, ref_col: account_id }
+        severity: critical
+      - name: amount_range
+        kind: range
+        column: amount
+        params: { min: -1000000, max: 1000000 }
+        severity: warn
+      - name: txn_type_in_set
+        kind: in_set
+        column: txn_type
+        params: { allowed: [DEBIT, CREDIT] }
+        severity: critical
+      - name: row_count_min
+        kind: row_count
+        params: { min: 1 }
+        severity: critical

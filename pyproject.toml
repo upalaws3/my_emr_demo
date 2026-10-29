@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# pyproject.toml  --  project metadata + tooling config for the OCBC POC
+# ---------------------------------------------------------------------------
+# POC NOTE (read me first): this repo is AUTHORED on a local Windows host whose
+# interpreter happens to be Python 3.14, but EVERY line of code must stay
+# compatible with Python 3.11 because that is the runtime on AWS EMR Serverless
+# (Spark 3.5 / Python 3.11). The tool configs below pin that 3.11 ceiling so
+# `black` and `ruff` flag any accidental use of newer syntax.
+# ---------------------------------------------------------------------------
+
+[build-system]
+# We never actually build a wheel for this POC; this block only satisfies tools
+# that expect a build backend to be declared.
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocbc-poc-pipeline"
+version = "0.1.0"
+description = "POC medallion data-ingestion pipeline on EMR Serverless (landing -> bronze -> silver -> canonical -> gold) with custom JSON lineage, DQ gate, PII masking, and an audit trail."
+readme = "README.md"
+# Intent: code targets the EMR Serverless 3.11 runtime. We express that range
+# here even though the local interpreter is newer -- it documents the contract.
+requires-python = ">=3.11,<3.12"
+license = { text = "Proprietary (demo)" }
+
+[tool.black]
+# Format for Python 3.11 so black never rewrites code into newer-only syntax.
+target-version = ["py311"]
+line-length = 100
+
+[tool.ruff]
+# Same 3.11 ceiling for the linter. Keeping this in sync with black is what
+# actually enforces "no syntax/stdlib newer than 3.11" on a 3.14 host.
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# A small, demo-friendly rule selection: pyflakes (F), pycodestyle errors (E)
+# and warnings (W), isort import ordering (I), and pyupgrade (UP). UP is handy
+# because it will suggest only changes valid for the pinned target-version.
+select = ["E", "F", "W", "I", "UP"]
+
+[tool.pytest.ini_options]
+# All unit tests live under tests/. They are pure-Python (no Spark, no AWS) so
+# they run green on the bare host.
+testpaths = ["tests"]

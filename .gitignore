@@ -1,0 +1,29 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars.local
+crash.log
+
+# Local warehouse / data artifacts
+warehouse/
+local-warehouse/
+*.parquet
+*.orc
+spark-warehouse/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
