@@ -1,7 +1,7 @@
 {
   "task_id": "task-emr-baseline-pipeline",
   "task_description": "Build a POC-scale, easy-complexity, end-to-end banking data ingestion pipeline on AWS EMR Serverless + PySpark: a landing->bronze->silver->canonical->gold medallion+canonical flow, provisioned with Terraform, orchestrated by Step Functions, with lightweight custom JSON lineage to S3/Glue, in-Spark DQ with a FAIL gate, canonical-layer PII masking, structured logging + an audit table, and Athena on gold. Authored and verified on a local Windows host with NO AWS access (terraform/java/pyspark all absent): verification is byte-compile, running the generator, and pure-Python pytest only; terraform validate/fmt and a local Spark smoke are skipped; Spark/Athena/Terraform runtime behavior is deferred to AWS. Baseline iteration only; future scope (OpenLineage, heavier GE, Lake Formation, cost dashboards) is out of scope.",
-  "status": "in_progress",
+  "status": "completed",
   "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
   "blocked_reason": null
 }
