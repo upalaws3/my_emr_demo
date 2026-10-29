@@ -12,7 +12,7 @@
 # name_prefix = "{project}-{env}" = "ocbc-poc-dev" drives every resource name.
 project: ocbc-poc
 env: dev
-region: ap-southeast-1
+region: us-east-1
 
 # --- S3 buckets (design S2.2) ---------------------------------------------
 # These are BASE names. The AWS account id is appended at Terraform / runtime
@@ -22,6 +22,12 @@ region: ap-southeast-1
 buckets:
   datalake: ocbc-poc-dev-datalake
   athena_results: ocbc-poc-dev-athena-results
+
+# --- Allowed environments (design S6/S10) ---------------------------------
+# The POC only ships "dev". Listing it here (instead of a tuple baked into the
+# job argparse) lets a demo add an env WITHOUT editing job code -- the jobs read
+# this list for their --env choices.
+environments: [dev]
 
 # --- Glue databases (design S2.3) -----------------------------------------
 # One database per layer plus audit. Names use UNDERSCORES because Athena/Hive
@@ -42,6 +48,21 @@ databases:
 # A production system would use a KMS-backed key / tokenization vault instead.
 masking:
   salt: ocbc-poc-demo-salt-2025
+  # WHICH columns are masked and by WHICH method, per table (design S4). The
+  # schema contract (column names/types/pii flags) stays in schema_defs.py; this
+  # is only the what/how-to-mask POLICY, so a demo can retune it without code.
+  # Method is one of: name | email | phone | pan | token | dob.
+  columns:
+    customers:
+      first_name: name
+      last_name: name
+      email: email
+      phone: phone
+      national_id: token   # SHA-256 token; needs the salt above
+      date_of_birth: dob    # generalized to birth_year (int)
+    cards:
+      card_number: pan
+      cardholder_name: name
 
 # --- Synthetic data generator (design S3 row counts, Finding 8) -----------
 # Target row counts are declared ONCE here as [min, max] ranges and read by BOTH
@@ -52,6 +73,32 @@ generator:
     accounts: [140, 160]      # ~150 (>= 1 per customer, some customers 2)
     cards: [110, 130]         # ~120 (not every account has a card)
     transactions: [700, 900]  # ~800; largest fact table but still POC-tiny
+
+# --- Reference data (single source of truth for code sets) ----------------
+# These coded-value sets were previously declared TWICE (config dq_rules + the
+# COUNTRIES/CURRENCIES tuples in data/generator/schema_defs.py). They now live
+# ONCE here. The stdlib-only generator reads them with its narrow YAML scanner
+# (no PyYAML); the DQ job and config_loader read them via PyYAML. Keep every
+# entry a simple inline list of bare tokens on ONE line so the generator's
+# scanner can parse it.
+reference_data:
+  countries:        [SG, US, MY, GB, IN, AU]       # customers.country
+  currencies:       [SGD, USD, MYR, GBP, INR, AUD]  # accounts/transactions.currency
+  account_types:    [SAVINGS, CHECKING, CREDIT]
+  account_statuses: [ACTIVE, DORMANT, CLOSED]
+  card_types:       [VISA, MASTERCARD, AMEX]
+  card_statuses:    [ACTIVE, BLOCKED, EXPIRED]
+  txn_types:        [DEBIT, CREDIT]
+
+# --- Gold marts (declarative bits only -- design S6.4) --------------------
+# ONLY the simple declarative metadata is config: the list of marts and each
+# mart's lineage input tables. The Spark aggregation bodies (build_customer_360
+# etc.) STAY in Python on purpose -- turning joins/aggregations into config would
+# make the POC LESS simple (explicit non-goal).
+gold_marts:
+  customer_360:      { inputs: [customers, accounts, cards, transactions] }
+  daily_txn_summary: { inputs: [transactions] }
+  account_balances:  { inputs: [accounts, customers] }
 
 # --- Data-quality rules (design S6.5) -------------------------------------
 # One subtree per table. Every expectation carries an explicit `severity` so a
@@ -65,9 +112,8 @@ generator:
 dq_rules:
 
   customers:
-    # The allowed country set lives in config (NOT hardcoded in the job) and
-    # matches exactly what the generator emits.
-    country_allowed: [SG, US, MY, GB, IN, AU]
+    # The allowed country set is NOT repeated here -- it lives ONCE in
+    # reference_data.countries and the in_set rule below resolves it from there.
     expectations:
       - name: customer_id_not_null
         kind: not_null
@@ -108,8 +154,7 @@ dq_rules:
         severity: warn
       - name: status_in_set
         kind: in_set
-        column: status
-        params: { allowed: [ACTIVE, DORMANT, CLOSED] }
+        column: status   # allowed set resolved from reference_data.account_statuses
         severity: warn
       - name: row_count_min
         kind: row_count
@@ -129,8 +174,7 @@ dq_rules:
         severity: critical
       - name: card_type_in_set
         kind: in_set
-        column: card_type
-        params: { allowed: [VISA, MASTERCARD, AMEX] }
+        column: card_type   # allowed set resolved from reference_data.card_types
         severity: warn
       - name: expiry_month_range
         kind: range
@@ -160,8 +204,7 @@ dq_rules:
         severity: warn
       - name: txn_type_in_set
         kind: in_set
-        column: txn_type
-        params: { allowed: [DEBIT, CREDIT] }
+        column: txn_type   # allowed set resolved from reference_data.txn_types
         severity: critical
       - name: row_count_min
         kind: row_count

@@ -55,11 +55,12 @@ _MERCHANTS = (
     "FairPrice", "Amazon", "Shell", "Starbucks", "Grab", "Netflix", "Uber",
     "Apple", "Lazada", "IKEA", None,  # None -> nullable merchant left blank
 )
-_ACCOUNT_TYPES = ("SAVINGS", "CHECKING", "CREDIT")
-_ACCOUNT_STATUSES = ("ACTIVE", "DORMANT", "CLOSED")
-_CARD_TYPES = ("VISA", "MASTERCARD", "AMEX")
-_CARD_STATUSES = ("ACTIVE", "BLOCKED", "EXPIRED")
-_TXN_TYPES = ("DEBIT", "CREDIT")
+# NOTE: _FIRST_NAMES / _LAST_NAMES / _EMAIL_DOMAINS / _MERCHANTS stay in code on
+# purpose -- they are cosmetic value pools for realism, NOT a shared contract
+# with the DQ job, so there is no benefit to externalizing them. The coded-value
+# sets that ARE a shared contract (countries, currencies, account/card/txn
+# enums) live ONCE in config/pipeline.yaml under reference_data and are read by
+# read_reference_data() below.
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,71 @@ def read_row_count_ranges() -> dict[str, tuple[int, int]]:
     return ranges
 
 
+# Reference-data keys the generator depends on (single source of truth lives in
+# config/pipeline.yaml under reference_data; see schema_defs for the schema).
+_REQUIRED_REFERENCE_KEYS = (
+    "countries",
+    "currencies",
+    "account_types",
+    "account_statuses",
+    "card_types",
+    "card_statuses",
+    "txn_types",
+)
+
+
+def read_reference_data() -> dict[str, list[str]]:
+    """Parse ONLY the ``reference_data`` block from config/pipeline.yaml.
+
+    Same approach as :func:`read_row_count_ranges`: a narrow, stdlib-only scan
+    (no PyYAML) that finds the ``reference_data:`` key and reads each indented
+    ``<name>: [tok, tok, ...]`` line beneath it, stopping at the first line that
+    dedents to/below the key. This keeps the generator STDLIB-ONLY while sharing
+    the exact same coded-value sets the DQ job reads via PyYAML.
+
+    Each list MUST be a single inline ``[a, b, c]`` of bare tokens (that is how
+    reference_data is authored in config) so this scanner stays simple.
+    """
+    text = _config_path().read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    ref: dict[str, list[str]] = {}
+    in_block = False
+    block_indent = 0
+
+    # Matches e.g. "  countries: [SG, US, MY]" capturing name + the inline list.
+    entry_re = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*\[([^\]]*)\]")
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if not in_block:
+            if re.match(r"^\s*reference_data\s*:\s*$", line):
+                in_block = True
+                block_indent = len(line) - len(line.lstrip())
+            continue
+
+        indent = len(line) - len(line.lstrip())
+        if indent <= block_indent:
+            break
+
+        m = entry_re.match(line)
+        if m:
+            name = m.group(2)
+            tokens = [t.strip() for t in m.group(3).split(",") if t.strip()]
+            ref[name] = tokens
+
+    # Sanity: every set the generator draws from must be present and non-empty.
+    for key in _REQUIRED_REFERENCE_KEYS:
+        if not ref.get(key):
+            raise ValueError(
+                f"reference_data.{key} missing/empty in {_config_path()}"
+            )
+    return ref
+
+
 # ---------------------------------------------------------------------------
 # Per-table row generators. Each returns a list of dicts keyed by column name.
 # Parents are generated first so children can draw FKs from them.
@@ -146,8 +212,9 @@ def _rand_timestamp(rng: random.Random, start_year: int, end_year: int) -> datet
     return datetime(d.year, d.month, d.day, rng.randint(0, 23), rng.randint(0, 59), rng.randint(0, 59))
 
 
-def gen_customers(rng: random.Random, n: int) -> list[dict]:
+def gen_customers(rng: random.Random, n: int, ref: dict[str, list[str]]) -> list[dict]:
     """Generate ``n`` customers with all PII columns populated (design S3.1)."""
+    countries = ref["countries"]
     rows = []
     for i in range(1, n + 1):
         first = rng.choice(_FIRST_NAMES)
@@ -164,14 +231,16 @@ def gen_customers(rng: random.Random, n: int) -> list[dict]:
                 "phone": f"+65{rng.randint(80000000, 99999999)}",
                 "national_id": national_id,
                 "date_of_birth": _rand_date(rng, 1955, 2004).isoformat(),
-                "country": rng.choice(schema_defs.COUNTRIES),
+                "country": rng.choice(countries),
                 "created_at": _rand_timestamp(rng, 2020, 2023).isoformat(sep=" "),
             }
         )
     return rows
 
 
-def gen_accounts(rng: random.Random, n: int, customers: list[dict]) -> list[dict]:
+def gen_accounts(
+    rng: random.Random, n: int, customers: list[dict], ref: dict[str, list[str]]
+) -> list[dict]:
     """Generate ``n`` accounts; each customer_id drawn from existing customers.
 
     To satisfy "at least 1 account per customer" we first give every customer one
@@ -188,29 +257,36 @@ def gen_accounts(rng: random.Random, n: int, customers: list[dict]) -> list[dict
     assigned = assigned[:n]
     rng.shuffle(assigned)
 
+    account_types = ref["account_types"]
+    currencies = ref["currencies"]
+    account_statuses = ref["account_statuses"]
     for i, cust_id in enumerate(assigned, start=1):
         rows.append(
             {
                 "account_id": f"ACC{i:08d}",
                 "customer_id": cust_id,
-                "account_type": rng.choice(_ACCOUNT_TYPES),
-                "currency": rng.choice(schema_defs.CURRENCIES),
+                "account_type": rng.choice(account_types),
+                "currency": rng.choice(currencies),
                 # balance as a 2dp decimal string (decimal(15,2)).
                 "balance": f"{rng.uniform(-5000, 250000):.2f}",
-                "status": rng.choice(_ACCOUNT_STATUSES),
+                "status": rng.choice(account_statuses),
                 "opened_date": _rand_date(rng, 2015, 2023).isoformat(),
             }
         )
     return rows
 
 
-def gen_cards(rng: random.Random, n: int, accounts: list[dict]) -> list[dict]:
+def gen_cards(
+    rng: random.Random, n: int, accounts: list[dict], ref: dict[str, list[str]]
+) -> list[dict]:
     """Generate ``n`` cards; each account_id drawn from existing accounts.
 
     Not every account has a card (ranges keep cards < accounts), so we simply
     draw a random account per card.
     """
     account_ids = [a["account_id"] for a in accounts]
+    card_types = ref["card_types"]
+    card_statuses = ref["card_statuses"]
     rows = []
     for i in range(1, n + 1):
         # 16-digit PAN as a string; masking later keeps only the last 4.
@@ -220,18 +296,22 @@ def gen_cards(rng: random.Random, n: int, accounts: list[dict]) -> list[dict]:
                 "card_id": f"CARD{i:08d}",
                 "account_id": rng.choice(account_ids),
                 "card_number": pan,
-                "card_type": rng.choice(_CARD_TYPES),
+                "card_type": rng.choice(card_types),
                 "expiry_month": rng.randint(1, 12),
                 "expiry_year": rng.randint(2026, 2031),
                 "cardholder_name": f"{rng.choice(_FIRST_NAMES)} {rng.choice(_LAST_NAMES)}",
-                "status": rng.choice(_CARD_STATUSES),
+                "status": rng.choice(card_statuses),
             }
         )
     return rows
 
 
 def gen_transactions(
-    rng: random.Random, n: int, accounts: list[dict], cards: list[dict]
+    rng: random.Random,
+    n: int,
+    accounts: list[dict],
+    cards: list[dict],
+    ref: dict[str, list[str]],
 ) -> list[dict]:
     """Generate ``n`` transactions; account_id from accounts, card_id from cards.
 
@@ -245,6 +325,8 @@ def gen_transactions(
     """
     account_ids = [a["account_id"] for a in accounts]
     card_ids = [c["card_id"] for c in cards]
+    currencies = ref["currencies"]
+    txn_types = ref["txn_types"]
     rows = []
     for i in range(1, n + 1):
         has_card = bool(card_ids) and rng.random() > 0.3
@@ -255,8 +337,8 @@ def gen_transactions(
                 "account_id": rng.choice(account_ids),
                 "card_id": rng.choice(card_ids) if has_card else None,
                 "amount": f"{amount:.2f}",
-                "currency": rng.choice(schema_defs.CURRENCIES),
-                "txn_type": rng.choice(_TXN_TYPES),
+                "currency": rng.choice(currencies),
+                "txn_type": rng.choice(txn_types),
                 "merchant": rng.choice(_MERCHANTS),
                 "txn_timestamp": _rand_timestamp(rng, 2023, 2024).isoformat(sep=" "),
             }
@@ -319,6 +401,7 @@ def generate(out_dir: str, inject_dq_failure: bool = False, seed: int = 42) -> d
     """
     rng = random.Random(seed)
     ranges = read_row_count_ranges()
+    ref = read_reference_data()  # coded-value sets (single source of truth)
 
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -330,10 +413,10 @@ def generate(out_dir: str, inject_dq_failure: bool = False, seed: int = 42) -> d
     n_transactions = rng.randint(*ranges["transactions"])
 
     # Generate parents BEFORE children to guarantee referential integrity.
-    customers = gen_customers(rng, n_customers)
-    accounts = gen_accounts(rng, n_accounts, customers)
-    cards = gen_cards(rng, n_cards, accounts)
-    transactions = gen_transactions(rng, n_transactions, accounts, cards)
+    customers = gen_customers(rng, n_customers, ref)
+    accounts = gen_accounts(rng, n_accounts, customers, ref)
+    cards = gen_cards(rng, n_cards, accounts, ref)
+    transactions = gen_transactions(rng, n_transactions, accounts, cards, ref)
 
     if inject_dq_failure:
         transactions = _inject_transactions_dq_failure(transactions)

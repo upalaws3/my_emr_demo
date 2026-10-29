@@ -12,7 +12,7 @@
 # --- Deterministic base (drives every resource name) ----------------------
 project = "ocbc-poc"
 env     = "dev"
-region  = "ap-southeast-1"
+region  = "us-east-1"
 
 # --- EMR Serverless capacity + auto-stop (FinOps) -------------------------
 idle_timeout_minutes = 15

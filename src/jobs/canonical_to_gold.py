@@ -34,8 +34,23 @@ if __package__ in (None, ""):
 else:
     from . import _job_common
 
-# The three marts this stage produces (design S6.4).
-GOLD_MARTS = ("customer_360", "daily_txn_summary", "account_balances")
+def gold_marts() -> tuple[str, ...]:
+    """Return the configured gold mart names (design S6.4).
+
+    The mart LIST and each mart's lineage input tables are config-driven
+    (``config.gold_marts``) so a demo can see/retune the declarative metadata
+    without code. Config import is lazy to keep the module import-safe.
+    """
+    from src.common import config_loader
+
+    return tuple(config_loader.load_config().gold_marts)
+
+
+def _mart_inputs(mart: str) -> list[str]:
+    """Return the lineage input tables for ``mart`` from config."""
+    from src.common import config_loader
+
+    return list(config_loader.load_config().gold_marts[mart]["inputs"])
 
 
 def _canonical(spark, ctx, table: str):
@@ -155,11 +170,14 @@ def build_account_balances(spark, ctx):
     )
 
 
-# Mart name -> builder function + the lineage input tables it reads.
+# Mart name -> builder FUNCTION only. The aggregation bodies stay in Python on
+# purpose (design S6.4): turning joins/aggregations into config would make the
+# POC less simple. Only the declarative bits (mart list + input tables) are
+# config-driven (see gold_marts() / _mart_inputs()).
 _MART_BUILDERS = {
-    "customer_360": (build_customer_360, ["customers", "accounts", "cards", "transactions"]),
-    "daily_txn_summary": (build_daily_txn_summary, ["transactions"]),
-    "account_balances": (build_account_balances, ["accounts", "customers"]),
+    "customer_360": build_customer_360,
+    "daily_txn_summary": build_daily_txn_summary,
+    "account_balances": build_account_balances,
 }
 
 
@@ -173,7 +191,8 @@ def process_mart(spark, cfg, ctx, run_id: str, mart: str, local: bool) -> None:
     started_at = lineage._now_iso()
     start_monotonic = time.monotonic()
 
-    builder_fn, input_tables = _MART_BUILDERS[mart]
+    builder_fn = _MART_BUILDERS[mart]
+    input_tables = _mart_inputs(mart)  # lineage input tables from config (S6.4)
     logging_util.log_event(logger, logging_util.EVENT_JOB_START, table=mart)
 
     df = builder_fn(spark, ctx)
@@ -246,9 +265,10 @@ def _safe_write_audit(spark, record, ctx, logger) -> None:
 
 def _marts_to_build(args) -> tuple[str, ...]:
     """Resolve which marts to build. --table may name a single mart; else all."""
-    if args.table is not None and args.table in GOLD_MARTS:
+    marts = gold_marts()
+    if args.table is not None and args.table in marts:
         return (args.table,)
-    return GOLD_MARTS
+    return marts
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -290,8 +310,11 @@ def _parse_gold_args(job: str, argv: list[str] | None):
     import argparse
 
     parser = argparse.ArgumentParser(prog=job, description=f"{job} stage.")
+    # Allowed --env values and the gold mart names both come from config so a
+    # demo can retune them without touching code.
+    marts = gold_marts()
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--env", required=True, choices=("dev",))
+    parser.add_argument("--env", required=True, choices=_job_common.allowed_envs())
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--all", dest="all_tables", action="store_true")
     group.add_argument("--table", dest="table", default=None)
@@ -301,8 +324,8 @@ def _parse_gold_args(job: str, argv: list[str] | None):
         parser.exit(2, "event=config_fail --run-id must be a non-empty string\n")
     if not args.all_tables and args.table is None:
         args.all_tables = True
-    if args.table is not None and args.table not in GOLD_MARTS:
-        parser.exit(2, f"event=config_fail unknown --table {args.table!r}; expected {GOLD_MARTS}\n")
+    if args.table is not None and args.table not in marts:
+        parser.exit(2, f"event=config_fail unknown --table {args.table!r}; expected {marts}\n")
     return args
 
 

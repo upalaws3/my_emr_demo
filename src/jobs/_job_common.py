@@ -36,8 +36,17 @@ if str(_REPO_ROOT) not in sys.path:
 # from schema_defs keeps a single source of truth.
 from data.generator.schema_defs import TABLE_ORDER  # noqa: E402
 
-# Allowed --env values for the POC (design S6/S10).
-_ALLOWED_ENVS = ("dev",)
+
+def allowed_envs() -> tuple[str, ...]:
+    """Return the allowed --env values from config (design S6/S10).
+
+    Driven by ``config.environments`` so a demo can add an env WITHOUT touching
+    job code. Config import is lazy here to keep this module import-safe on a
+    bare host (no PyYAML needed just to import).
+    """
+    from src.common import config_loader
+
+    return tuple(config_loader.load_config().environments)
 
 
 def job_name_from_file(file_path: str) -> str:
@@ -62,7 +71,8 @@ def parse_job_args(job: str, argv: list[str] | None = None) -> argparse.Namespac
         description=f"{job} stage of the OCBC medallion pipeline.",
     )
     parser.add_argument("--run-id", required=True, help="Non-empty run identifier.")
-    parser.add_argument("--env", required=True, choices=_ALLOWED_ENVS, help="Environment (dev).")
+    # Allowed --env values come from config so a demo can add an env without code.
+    parser.add_argument("--env", required=True, choices=allowed_envs(), help="Environment (dev).")
     # --all / --table are mutually exclusive; --all is the default behavior.
     group = parser.add_mutually_exclusive_group()
     group.add_argument(

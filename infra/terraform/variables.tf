@@ -30,7 +30,7 @@ variable "env" {
 variable "region" {
   description = "AWS region to deploy into. Mirrors config/pipeline.yaml `region`."
   type        = string
-  default     = "ap-southeast-1"
+  default     = "us-east-1"
 }
 
 # --- EMR Serverless capacity / auto-stop (FinOps, design S9) --------------

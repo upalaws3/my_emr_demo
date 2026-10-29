@@ -81,8 +81,10 @@ def process_table(spark, cfg, ctx, run_id: str, table: str, salt: str, local: bo
         if audit_col in silver.columns:
             silver = silver.drop(audit_col)
 
-    # Apply PII masking per the S4 catalog (in place; dob -> birth_year).
-    masked = masking.apply_masking(silver, table, salt)
+    # Apply PII masking per the S4 catalog (config-driven; in place; dob ->
+    # birth_year). The catalog lives in config.masking.columns, not in code.
+    mask_columns = masking.pii_columns_for(table, cfg.masking)
+    masked = masking.apply_masking(silver, table, salt, mask_columns)
 
     output_rows = masked.count()
     fq_table = io_paths.iceberg_table("canonical", table, ctx)
@@ -100,7 +102,7 @@ def process_table(spark, cfg, ctx, run_id: str, table: str, salt: str, local: bo
         fq_table, "iceberg", row_count=output_rows,
         glue_table=f"{io_paths.glue_db('canonical', ctx)}.{table}",
     )
-    for column, method in masking.PII_COLUMNS.get(table, {}).items():
+    for column, method in mask_columns.items():
         # date_of_birth becomes birth_year; reflect that in the mapping output.
         out_col = "birth_year" if method == "dob" else column
         builder.add_column_mapping(out_col, [column], f"mask:{method}")

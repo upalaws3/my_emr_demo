@@ -46,7 +46,7 @@ _COMMON_PUBLIC = {
     "src.common.config_loader": ["load_config", "Config", "ConfigError"],
     "src.common.io_paths": ["s3_layer_prefix", "iceberg_table", "glue_db", "IoContext"],
     "src.common.logging_util": ["get_logger", "log_event", "timed"],
-    "src.common.masking": ["mask_name", "tokenize_id", "apply_masking", "PII_COLUMNS"],
+    "src.common.masking": ["mask_name", "tokenize_id", "apply_masking", "pii_columns_for"],
     "src.common.lineage": ["start_lineage", "emit", "register_glue_table"],
     "src.common.quality": ["run_expectations", "emit_quality", "enforce_gate", "QualityGateError"],
     "src.common.audit": ["AuditRecord", "write_audit", "STATUSES"],

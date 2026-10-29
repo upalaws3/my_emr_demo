@@ -58,3 +58,32 @@ def test_mask_pan():
     # Idempotent: last 4 survive re-masking.
     assert masking.mask_pan("**** **** **** 1234") == "**** **** **** 1234"
     assert masking.mask_pan(None) is None
+
+
+# The PII catalog is config-driven: pii_columns_for reads masking.columns.
+_MASKING_CFG = {
+    "salt": "s",
+    "columns": {
+        "customers": {
+            "first_name": "name",
+            "email": "email",
+            "national_id": "token",
+            "date_of_birth": "dob",
+        },
+        "cards": {"card_number": "pan"},
+    },
+}
+
+
+def test_pii_columns_for_reads_config():
+    cols = masking.pii_columns_for("customers", _MASKING_CFG)
+    assert cols["national_id"] == "token"
+    assert cols["date_of_birth"] == "dob"
+    assert cols["email"] == "email"
+
+
+def test_pii_columns_for_table_without_pii_is_empty():
+    # accounts has no masking.columns entry -> empty mapping.
+    assert masking.pii_columns_for("accounts", _MASKING_CFG) == {}
+    # A missing/None config is tolerated too.
+    assert masking.pii_columns_for("customers", {}) == {}

@@ -59,6 +59,25 @@ _REFERENTIAL = {
     "transactions": ("account_id", "accounts", "account_id"),
 }
 
+# in_set column -> reference_data key. Small, explicit map (NOT a generic engine)
+# so an in_set DQ rule resolves its allowed values from the single source of
+# truth in config.reference_data without repeating the literal set per rule.
+_IN_SET_REFERENCE_KEY = {
+    "country": "countries",
+    "currency": "currencies",
+    "status": "account_statuses",
+    "card_type": "card_types",
+    "txn_type": "txn_types",
+}
+
+
+def _REFERENCE_ALLOWED(cfg, column: str) -> list:
+    """Resolve an in_set rule's allowed values from config.reference_data."""
+    key = _IN_SET_REFERENCE_KEY.get(column)
+    if key is None:
+        return []
+    return list(cfg.reference_data.get(key, []))
+
 
 def _build_expectations(cfg, table: str):
     """Translate config/pipeline.yaml dq_rules[table] into Expectation objects.
@@ -79,10 +98,12 @@ def _build_expectations(cfg, table: str):
         elif kind == "unique":
             exps.append(quality.expect_unique(entry["columns"], severity))
         elif kind == "in_set":
-            # country_allowed lives one level up for customers (design S6.5).
+            # Allowed sets live ONCE in config.reference_data (design S6.5); a
+            # rule may still pin an inline params.allowed, but normally the set
+            # is resolved from reference_data by a small column -> key map.
             allowed = params.get("allowed")
-            if allowed is None and table == "customers" and entry["column"] == "country":
-                allowed = rules.get("country_allowed", [])
+            if allowed is None:
+                allowed = _REFERENCE_ALLOWED(cfg, entry["column"])
             exps.append(quality.expect_in_set(entry["column"], allowed or [], severity))
         elif kind == "range":
             exps.append(

@@ -14,23 +14,17 @@ from __future__ import annotations
 
 import hashlib
 
-# -- Per-table PII column -> masking method (design S4) --------------------
-# The method name is a key into _METHODS below. apply_masking uses this map to
-# know which columns to transform on each table. Tables with no PII are absent.
-PII_COLUMNS: dict[str, dict[str, str]] = {
-    "customers": {
-        "first_name": "name",
-        "last_name": "name",
-        "email": "email",
-        "phone": "phone",
-        "national_id": "token",  # SHA-256 token; needs the salt
-        "date_of_birth": "dob",  # generalized to birth year (int)
-    },
-    "cards": {
-        "card_number": "pan",
-        "cardholder_name": "name",
-    },
-}
+
+def pii_columns_for(table: str, masking_cfg: dict) -> dict[str, str]:
+    """Return the per-table column -> masking-method map from config (design S4).
+
+    The what/how-to-mask POLICY lives ONCE in config/pipeline.yaml under
+    ``masking.columns`` (the schema contract stays in schema_defs.py). This
+    module intentionally holds NO hardcoded catalog so it stays import-safe with
+    no config/PyYAML dependency at import time; the caller passes ``masking_cfg``
+    (i.e. ``cfg.masking``) resolved from config. Tables with no PII return ``{}``.
+    """
+    return dict((masking_cfg or {}).get("columns", {}).get(table, {}) or {})
 
 
 def mask_name(v: str | None) -> str | None:
@@ -121,13 +115,14 @@ _SIMPLE_METHODS = {
 }
 
 
-def apply_masking(df, table: str, salt: str):
+def apply_masking(df, table: str, salt: str, columns: dict[str, str]):
     """Return a new DataFrame with the table's PII columns masked (design S4).
 
     This is the only Spark-touching function; ``pyspark`` is imported LAZILY so
     the module stays import-safe on a host without Spark.
 
-    Rules applied per column, driven by :data:`PII_COLUMNS`:
+    ``columns`` is the per-table column -> method map resolved by the caller from
+    config (``pii_columns_for(table, cfg.masking)``). Rules applied per column:
       * name/email/phone/pan -> the matching pure function via a UDF
       * token (national_id)  -> ``tokenize_id`` with the resolved salt (in place)
       * dob (date_of_birth)  -> REPLACED by a new ``birth_year`` int column, the
@@ -138,9 +133,8 @@ def apply_masking(df, table: str, salt: str):
     from pyspark.sql.types import IntegerType, StringType
 
     masked = df
-    columns = PII_COLUMNS.get(table, {})
 
-    for column, method in columns.items():
+    for column, method in (columns or {}).items():
         if method in _SIMPLE_METHODS:
             fn = _SIMPLE_METHODS[method]
             udf = F.udf(fn, StringType())

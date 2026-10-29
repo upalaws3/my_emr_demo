@@ -27,15 +27,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Country codes the generator emits for customers.country. This is the SAME set
-# declared in config/pipeline.yaml under dq_rules.customers.country_allowed; the
-# config is the source of truth for the DQ check, this constant is what the
-# generator draws from (design S3/S6.5). Keeping both in sync is covered by the
-# generator run + the DQ rule reading config.
-COUNTRIES = ("SG", "US", "MY", "GB", "IN", "AU")
-
-# ISO-3 currency codes used by accounts/transactions (POC-small set).
-CURRENCIES = ("SGD", "USD", "MYR", "GBP", "INR", "AUD")
+# NOTE: the coded-value sets (countries, currencies, account/card/txn enums) used
+# to live here as COUNTRIES/CURRENCIES tuples. They are a shared contract with the
+# DQ job, so they now live ONCE in config/pipeline.yaml under reference_data and
+# are read by data/generator/generate.read_reference_data(). This module keeps
+# only the SCHEMA CONTRACT (column names/types/nullable/pii) below.
 
 
 @dataclass(frozen=True)

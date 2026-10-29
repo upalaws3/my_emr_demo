@@ -8,6 +8,8 @@ lineage** to S3/Glue, structured logging + a durable **audit table**, and
 **Athena** on the gold database. It is built for a banking customer whose key
 priorities are FinOps, data security, lineage, and tracking.
 
+> New here? Start with [`INSTALL.md`](INSTALL.md) for step-by-step setup.
+
 ## Architecture at a glance
 
 Data flows landing → bronze → silver → canonical → gold. The **DQ gate** lives
@@ -69,6 +71,7 @@ SilverToCanonical → CanonicalToGold → PipelineSucceeded`, with every stage's
 | `sql/athena/` | setup notes + four example queries (gold marts + audit) |
 | `docs/` | architecture, finops, security, lineage/quality/observability, PII catalog |
 | `tests/` | pure-Python unit tests |
+| `INSTALL.md` | step-by-step setup + deploy + teardown guide |
 
 ## Prerequisites
 

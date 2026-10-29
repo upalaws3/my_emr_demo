@@ -21,9 +21,12 @@ _REQUIRED_TOP_KEYS = (
     "project",
     "env",
     "region",
+    "environments",
     "buckets",
     "databases",
     "masking",
+    "reference_data",
+    "gold_marts",
     "dq_rules",
 )
 
@@ -48,9 +51,15 @@ class Config:
     project: str
     env: str
     region: str
+    # Allowed --env values (jobs read this for their argparse choices).
+    environments: list
     buckets: dict[str, Any]
     databases: dict[str, Any]
     masking: dict[str, Any]
+    # Single source of truth for coded-value sets (countries/currencies/etc.).
+    reference_data: dict[str, Any]
+    # Declarative gold-mart metadata (mart name -> {inputs: [...]}).
+    gold_marts: dict[str, Any]
     dq_rules: dict[str, Any]
     generator: dict[str, Any]
     # The whole parsed mapping, kept so callers can reach anything not promoted
@@ -75,8 +84,10 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
     ------
     ConfigError
         If the file cannot be read/parsed, a required top-level key is missing,
-        or the required ``masking.salt`` sub-key is absent. Every message is
-        tagged ``event=config_fail``.
+        the required ``masking.salt`` / ``masking.columns`` sub-keys are absent,
+        ``environments`` is not a non-empty list, or ``reference_data`` is
+        missing a non-empty ``countries`` / ``currencies`` list. Every message
+        is tagged ``event=config_fail``.
     """
     # Lazy imports: keep the module importable on a host without PyYAML and keep
     # file I/O out of import time.
@@ -109,14 +120,38 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
     masking = data["masking"]
     if not isinstance(masking, dict) or not masking.get("salt"):
         raise ConfigError("event=config_fail missing required config key: masking.salt")
+    # masking.columns is the what/how-to-mask catalog (design S4). It must be a
+    # mapping (may be empty) so apply_masking can look up a per-table policy.
+    if not isinstance(masking.get("columns"), dict):
+        raise ConfigError("event=config_fail missing required config key: masking.columns")
+
+    # environments drives the job --env allow-list; it must be a non-empty list.
+    environments = data["environments"]
+    if not isinstance(environments, list) or not environments:
+        raise ConfigError("event=config_fail config key environments must be a non-empty list")
+
+    # reference_data is the single source of truth for coded-value sets. The two
+    # sets every table depends on (countries + currencies) must be non-empty lists.
+    reference_data = data["reference_data"]
+    if not isinstance(reference_data, dict):
+        raise ConfigError("event=config_fail config key reference_data must be a mapping")
+    for ref_key in ("countries", "currencies"):
+        value = reference_data.get(ref_key)
+        if not isinstance(value, list) or not value:
+            raise ConfigError(
+                f"event=config_fail reference_data.{ref_key} must be a non-empty list"
+            )
 
     return Config(
         project=data["project"],
         env=data["env"],
         region=data["region"],
+        environments=environments,
         buckets=data["buckets"],
         databases=data["databases"],
         masking=masking,
+        reference_data=reference_data,
+        gold_marts=data["gold_marts"],
         dq_rules=data["dq_rules"],
         # generator is optional at the schema level but present in the baseline;
         # default to an empty dict so .get("row_counts") stays safe.
