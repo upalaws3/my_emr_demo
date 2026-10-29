@@ -1,0 +1,145 @@
+{
+  "Comment": "OCBC POC medallion pipeline: landing -> bronze -> silver (DQ gate) -> canonical (PII mask) -> gold marts. Each stage is an EMR Serverless startJobRun.sync Task. Every stage's Catch[States.ALL] routes to the SINGLE shared PipelineFailed Fail state (design S8); the run ends at PipelineSucceeded. NO --job argument is passed -- each job derives its name from its script filename.",
+  "StartAt": "LandingToBronze",
+  "States": {
+    "LandingToBronze": {
+      "Type": "Task",
+      "Comment": "Stage 1: landing CSV/JSON -> bronze Parquet.",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_application_id}",
+        "ExecutionRoleArn": "${job_role_arn}",
+        "Name.$": "States.Format('landing_to_bronze-{}', $$.Execution.Name)",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "${jobs_s3_base}/landing_to_bronze.py",
+            "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "${emr_log_group_name}"
+            }
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PipelineFailed"
+        }
+      ],
+      "Next": "BronzeToSilver"
+    },
+
+    "BronzeToSilver": {
+      "Type": "Task",
+      "Comment": "Stage 2: bronze Parquet -> silver Iceberg. OWNS the DQ gate; a critical DQ failure exits non-zero here and the Catch routes to PipelineFailed (execution stops before SilverToCanonical).",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_application_id}",
+        "ExecutionRoleArn": "${job_role_arn}",
+        "Name.$": "States.Format('bronze_to_silver-{}', $$.Execution.Name)",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "${jobs_s3_base}/bronze_to_silver.py",
+            "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "${emr_log_group_name}"
+            }
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PipelineFailed"
+        }
+      ],
+      "Next": "SilverToCanonical"
+    },
+
+    "SilverToCanonical": {
+      "Type": "Task",
+      "Comment": "Stage 3: silver Iceberg -> canonical Iceberg with PII masking.",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_application_id}",
+        "ExecutionRoleArn": "${job_role_arn}",
+        "Name.$": "States.Format('silver_to_canonical-{}', $$.Execution.Name)",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "${jobs_s3_base}/silver_to_canonical.py",
+            "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "${emr_log_group_name}"
+            }
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PipelineFailed"
+        }
+      ],
+      "Next": "CanonicalToGold"
+    },
+
+    "CanonicalToGold": {
+      "Type": "Task",
+      "Comment": "Stage 4: canonical Iceberg -> gold Iceberg marts (customer_360, daily_txn_summary, account_balances).",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_application_id}",
+        "ExecutionRoleArn": "${job_role_arn}",
+        "Name.$": "States.Format('canonical_to_gold-{}', $$.Execution.Name)",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "${jobs_s3_base}/canonical_to_gold.py",
+            "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "${emr_log_group_name}"
+            }
+          }
+        }
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PipelineFailed"
+        }
+      ],
+      "Next": "PipelineSucceeded"
+    },
+
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Comment": "SINGLE shared failure terminal for every stage. A DQ-gate failure vs an infra failure is NOT discriminated here (the startJobRun.sync integration surfaces a generic EMR job-failed cause, not the Python exception class); the failure type is recovered out-of-band from the quality/<run_id>/ JSON and the DQ_FAILED audit row (design S8).",
+      "Error": "PipelineFailed",
+      "Cause": "A pipeline stage failed; inspect the stage's CloudWatch logs and, for DQ, the quality/<run_id>/ JSON and the audit row (status=DQ_FAILED)."
+    },
+
+    "PipelineSucceeded": {
+      "Type": "Succeed",
+      "Comment": "Terminal success: all four stages completed."
+    }
+  }
+}

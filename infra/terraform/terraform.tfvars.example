@@ -1,0 +1,37 @@
+# ===========================================================================
+# terraform.tfvars.example -- sane POC defaults (design S9)
+# ===========================================================================
+# Copy to terraform.tfvars and adjust as needed. Every value here also has a
+# default in variables.tf, so this file is documentation + a convenient
+# starting point rather than a hard requirement.
+#
+# NOTE: this module is NOT applied in this task (terraform is absent from the
+# authoring host). See README.md for the deploy runbook.
+# ===========================================================================
+
+# --- Deterministic base (drives every resource name) ----------------------
+project = "ocbc-poc"
+env     = "dev"
+region  = "ap-southeast-1"
+
+# --- EMR Serverless capacity + auto-stop (FinOps) -------------------------
+idle_timeout_minutes = 15
+max_cpu              = "8 vCPU"
+max_memory           = "32 GB"
+max_disk             = "200 GB"
+
+# --- S3 lifecycle day counts (FinOps storage caps) ------------------------
+landing_expire_days         = 30
+bronze_ia_days              = 30
+bronze_expire_days          = 90
+lineage_quality_expire_days = 90
+athena_results_expire_days  = 14
+abort_multipart_days        = 7
+
+# --- CloudWatch log retention ---------------------------------------------
+log_retention_days = 14
+
+# --- Optional tag overrides (merged onto the FinOps default_tags map) -----
+# tags = {
+#   CostCenter = "my-demo-cost-center"
+# }
