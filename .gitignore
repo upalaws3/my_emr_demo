@@ -21,6 +21,11 @@ local-warehouse/
 *.parquet
 *.orc
 spark-warehouse/
+# Generator / local-check output (not committed)
+_local_out/
+_local_out*/
+_lineage_out/
+_quality_out/
 
 # OS / editor
 .DS_Store
