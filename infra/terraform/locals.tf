@@ -58,6 +58,32 @@ locals {
   # is the ONLY module present and `import src` fails with ModuleNotFoundError.
   jobs_pyfiles = "s3://${local.datalake_bucket}/src.zip"
 
+  # Extra spark-submit conf passed to EVERY stage. Two things the jobs need at
+  # runtime that are NOT otherwise available on EMR Serverless:
+  #   * PIPELINE_ACCOUNT_ID -- so _job_common.build_io_context builds the REAL
+  #     data-lake bucket name (<base>-<account_id>); without it the job falls
+  #     back to the io_paths placeholder bucket (...-000000000000) and S3
+  #     returns NoSuchBucket.
+  #   * PIPELINE_MASK_SALT   -- deterministic PII tokenization salt used by
+  #     silver_to_canonical (config has a default, but we pin it here so every
+  #     stage/env agrees).
+  # Both are injected as driver AND executor env vars (EMR Serverless uses the
+  # spark.emr-serverless.driverEnv.* / spark.executorEnv.* conf keys) plus the
+  # pyFiles ship. Space-separated --conf flags form one SparkSubmitParameters
+  # string in the ASL.
+  pipeline_spark_params = join(" ", [
+    "--conf",
+    "spark.submit.pyFiles=${local.jobs_pyfiles}",
+    "--conf",
+    "spark.emr-serverless.driverEnv.PIPELINE_ACCOUNT_ID=${local.account_id}",
+    "--conf",
+    "spark.executorEnv.PIPELINE_ACCOUNT_ID=${local.account_id}",
+    "--conf",
+    "spark.emr-serverless.driverEnv.PIPELINE_MASK_SALT=${var.mask_salt}",
+    "--conf",
+    "spark.executorEnv.PIPELINE_MASK_SALT=${var.mask_salt}",
+  ])
+
   # --- FinOps tag map (design S9) -----------------------------------------
   # These six tags are applied to every taggable resource via the provider
   # default_tags block. `var.tags` can override/extend them per demo.

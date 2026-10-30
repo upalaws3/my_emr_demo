@@ -14,7 +14,7 @@
           "SparkSubmit": {
             "EntryPoint": "${jobs_s3_base}/landing_to_bronze.py",
             "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')",
-            "SparkSubmitParameters": "--conf spark.submit.pyFiles=${jobs_pyfiles}"
+            "SparkSubmitParameters": "${spark_params}"
           }
         },
         "ConfigurationOverrides": {
@@ -47,7 +47,7 @@
           "SparkSubmit": {
             "EntryPoint": "${jobs_s3_base}/bronze_to_silver.py",
             "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')",
-            "SparkSubmitParameters": "--conf spark.submit.pyFiles=${jobs_pyfiles}"
+            "SparkSubmitParameters": "${spark_params}"
           }
         },
         "ConfigurationOverrides": {
@@ -80,7 +80,7 @@
           "SparkSubmit": {
             "EntryPoint": "${jobs_s3_base}/silver_to_canonical.py",
             "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')",
-            "SparkSubmitParameters": "--conf spark.submit.pyFiles=${jobs_pyfiles}"
+            "SparkSubmitParameters": "${spark_params}"
           }
         },
         "ConfigurationOverrides": {
@@ -113,7 +113,7 @@
           "SparkSubmit": {
             "EntryPoint": "${jobs_s3_base}/canonical_to_gold.py",
             "EntryPointArguments.$": "States.Array('--run-id', $$.Execution.Name, '--env', 'dev', '--all')",
-            "SparkSubmitParameters": "--conf spark.submit.pyFiles=${jobs_pyfiles}"
+            "SparkSubmitParameters": "${spark_params}"
           }
         },
         "ConfigurationOverrides": {

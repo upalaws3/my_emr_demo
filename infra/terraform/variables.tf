@@ -33,6 +33,18 @@ variable "region" {
   default     = "us-east-1"
 }
 
+variable "mask_salt" {
+  description = <<-EOT
+    PII tokenization salt passed to the Spark jobs as PIPELINE_MASK_SALT (driver
+    + executor env). Mirrors config/pipeline.yaml masking.salt; the baseline uses
+    a fixed demo salt so tokens are stable across runs. Override for a real demo.
+    A production system would source this from Secrets Manager / a KMS-backed
+    tokenization vault instead of a plaintext variable.
+  EOT
+  type        = string
+  default     = "ocbc-poc-demo-salt-2025"
+}
+
 # --- EMR Serverless capacity / auto-stop (FinOps, design S9) --------------
 variable "idle_timeout_minutes" {
   description = "EMR Serverless auto-stop idle timeout (minutes). Keeps idle cost at zero."
