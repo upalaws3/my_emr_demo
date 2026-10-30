@@ -50,6 +50,11 @@ All four share one CLI contract: `--run-id <id> --env dev --all` (the job name i
 - **FinOps** — EMR Serverless auto-stop (idle cost → zero), S3 lifecycle rules on transient data, cost-allocation tags on every resource via Terraform `default_tags`.
 - **Tracking** — the audit table is the run-tracking surface; lineage + quality JSON give full traceability.
 
+### Services & technology used
+**AWS:** EMR Serverless (PySpark compute) · Step Functions (orchestration) · S3 (storage) · Glue Data Catalog (table catalog) · Athena (SQL on gold) · KMS (encryption) · CloudWatch Logs (observability) · IAM (least-privilege roles) · VPC interface/gateway endpoints (private networking) · STS · EC2 + SSM (deploy host) · EventBridge (managed, for `startJobRun.sync`). **Table format:** Apache Iceberg (silver/canonical/gold; bronze is Parquet).
+**Tooling:** Terraform (IaC) · Python 3.11+/PySpark · Git/GitHub · custom JSON lineage · in-Spark DQ.
+*Deferred to later iterations (see `docs/ROADMAP.md`): OpenLineage/Marquez, Great Expectations library, Lake Formation, MWAA/Airflow, cost dashboard.*
+
 ### What's in the repo
 | Path | Contents |
 | --- | --- |
