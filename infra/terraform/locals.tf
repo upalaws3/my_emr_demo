@@ -100,7 +100,9 @@ locals {
     "--conf",
     "spark.dynamicAllocation.minExecutors=1",
     "--conf",
-    "spark.dynamicAllocation.maxExecutors=2",
+    "spark.dynamicAllocation.initialExecutors=1",
+    "--conf",
+    "spark.dynamicAllocation.maxExecutors=4",
   ])
 
   # --- FinOps tag map (design S9) -----------------------------------------
