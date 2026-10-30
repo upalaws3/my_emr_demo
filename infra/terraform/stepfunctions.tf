@@ -18,6 +18,7 @@ resource "aws_sfn_state_machine" "medallion" {
     emr_application_id = aws_emrserverless_application.medallion.id
     job_role_arn       = aws_iam_role.emr_serverless_job_role.arn
     jobs_s3_base       = local.jobs_s3_base
+    jobs_pyfiles       = local.jobs_pyfiles
     emr_log_group_name = aws_cloudwatch_log_group.emr.name
   })
 

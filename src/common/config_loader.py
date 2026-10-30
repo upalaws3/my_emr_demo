@@ -67,6 +67,44 @@ class Config:
     raw: dict[str, Any]
 
 
+def _resolve_config_path(path: str) -> str:
+    """Resolve the config file location across local + EMR Serverless runtimes.
+
+    Resolution order (first hit wins):
+      1. The ``PIPELINE_CONFIG_PATH`` env var, if set (explicit override).
+      2. ``path`` as given, if it exists relative to the current working dir
+         (the local/dev case: run from the repo root).
+      3. ``config/pipeline.yaml`` discovered RELATIVE TO THIS PACKAGE. On EMR
+         Serverless the job runs from a staging dir (no repo-relative
+         ``config/``), but the deploy zips ``config/`` alongside ``src/`` and
+         ships it via spark.submit.pyFiles, so the file lands next to the
+         unpacked ``src`` package. We walk up from this module to find it.
+
+    Returns the first path that exists; otherwise returns ``path`` unchanged so
+    the caller's existing "could not read" error still fires with a clear msg.
+    """
+    import os
+    import pathlib
+
+    override = os.environ.get("PIPELINE_CONFIG_PATH")
+    if override:
+        return override
+
+    if pathlib.Path(path).exists():
+        return path
+
+    # Walk up from src/common/config_loader.py looking for config/pipeline.yaml.
+    # Covers both the repo layout and the EMR-unzipped layout (where src/ and
+    # config/ are unpacked as siblings into the job's working dir).
+    here = pathlib.Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "config" / "pipeline.yaml"
+        if candidate.exists():
+            return str(candidate)
+
+    return path
+
+
 def load_config(path: str = "config/pipeline.yaml") -> Config:
     """Read, parse, and validate the pipeline config.
 
@@ -74,6 +112,10 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
     ----------
     path:
         Path to the YAML file. Defaults to the repo-relative canonical location.
+        At runtime the actual file is located via ``_resolve_config_path`` so it
+        works both locally (run from repo root) and on EMR Serverless (where
+        ``config/`` is shipped in the pyFiles zip). Set ``PIPELINE_CONFIG_PATH``
+        to override explicitly.
 
     Returns
     -------
@@ -95,10 +137,14 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
 
     import yaml
 
+    resolved = _resolve_config_path(path)
+
     try:
-        text = pathlib.Path(path).read_text(encoding="utf-8")
+        text = pathlib.Path(resolved).read_text(encoding="utf-8")
     except OSError as exc:  # file missing / unreadable
-        raise ConfigError(f"event=config_fail could not read config at {path!r}: {exc}") from exc
+        raise ConfigError(
+            f"event=config_fail could not read config at {resolved!r}: {exc}"
+        ) from exc
 
     try:
         data = yaml.safe_load(text)

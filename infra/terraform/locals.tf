@@ -51,6 +51,13 @@ locals {
   # each job derives its name from its own filename.
   jobs_s3_base = "s3://${local.datalake_bucket}/src/jobs"
 
+  # The shared Python package (src/) is zipped and uploaded to this S3 key by
+  # the deploy runbook, then shipped to each Spark job via
+  # spark.submit.pyFiles so `from src.common ...` / `from src.jobs ...` resolve
+  # on the EMR Serverless driver + executors. Without this, the entryPoint file
+  # is the ONLY module present and `import src` fails with ModuleNotFoundError.
+  jobs_pyfiles = "s3://${local.datalake_bucket}/src.zip"
+
   # --- FinOps tag map (design S9) -----------------------------------------
   # These six tags are applied to every taggable resource via the provider
   # default_tags block. `var.tags` can override/extend them per demo.
