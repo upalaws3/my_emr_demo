@@ -150,6 +150,17 @@ def bootstrap(job: str, args: argparse.Namespace):
     cfg = config_loader.load_config()
     ctx = build_io_context(cfg)
 
-    warehouse = None if args.local else None  # warehouse set by Glue on AWS
-    spark = spark_session.build_spark(app_name=f"ocbc-{job}", local=args.local)
+    # The Iceberg Glue catalog needs an explicit warehouse location or it fails
+    # with "Cannot derive default warehouse location". On AWS this is
+    # s3://<datalake_bucket>/warehouse/ (from io_paths); locally the smoke test
+    # uses an on-disk warehouse, so we pass None and build_spark defaults it.
+    from src.common import io_paths
+
+    warehouse = None if args.local else io_paths.warehouse_uri(ctx)
+    spark = spark_session.build_spark(
+        app_name=f"ocbc-{job}",
+        catalog=ctx.catalog,
+        warehouse=warehouse,
+        local=args.local,
+    )
     return cfg, ctx, spark
