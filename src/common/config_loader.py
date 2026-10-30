@@ -101,8 +101,8 @@ def _resolve_config_path(path: str) -> str:
         return str(given)
 
     # Walk up from src/common/config_loader.py looking for config/pipeline.*,
-    # JSON first. Covers both the repo layout and the EMR-unzipped layout (where
-    # src/ and config/ are unpacked as siblings into the job's working dir).
+    # JSON first. Covers the repo layout and any EMR layout where the zip was
+    # EXTRACTED to disk next to the src package.
     here = pathlib.Path(__file__).resolve()
     for parent in here.parents:
         for name in ("pipeline.json", "pipeline.yaml"):
@@ -111,6 +111,61 @@ def _resolve_config_path(path: str) -> str:
                 return str(candidate)
 
     return path
+
+
+def _read_config_text(path: str) -> tuple[str, str]:
+    """Return ``(text, resolved_name)`` for the config, trying every source.
+
+    Order:
+      1. A concrete filesystem path (env override / cwd / walk-up extracted zip)
+         resolved by ``_resolve_config_path``.
+      2. Inside any ``sys.path`` entry -- a directory OR a .zip archive (this is
+         how EMR Serverless adds a spark.submit.pyFiles zip: the zip stays on
+         sys.path and is NOT necessarily extracted to disk, so a pathlib walk
+         cannot see ``config/pipeline.json`` -- but it exists as a zip entry).
+
+    This makes config loading independent of whether pyFiles was extracted.
+    ``pipeline.json`` is always tried before ``pipeline.yaml`` so the runtime
+    stays PyYAML-free.
+    """
+    import pathlib
+    import sys
+    import zipfile
+
+    # (1) concrete file on disk.
+    resolved = _resolve_config_path(path)
+    p = pathlib.Path(resolved)
+    if p.exists():
+        return p.read_text(encoding="utf-8"), resolved
+
+    # (2) search sys.path entries (dirs and zips) for config/pipeline.{json,yaml}.
+    rel_names = ("config/pipeline.json", "config/pipeline.yaml")
+    for entry in sys.path:
+        if not entry:
+            continue
+        ep = pathlib.Path(entry)
+        # Directory entry: look for the file directly.
+        if ep.is_dir():
+            for rel in rel_names:
+                cand = ep / rel
+                if cand.exists():
+                    return cand.read_text(encoding="utf-8"), rel
+        # Zip entry (the EMR pyFiles case): read the member from inside the zip.
+        elif zipfile.is_zipfile(entry):
+            try:
+                with zipfile.ZipFile(entry) as zf:
+                    members = set(zf.namelist())
+                    for rel in rel_names:
+                        if rel in members:
+                            return zf.read(rel).decode("utf-8"), f"{entry}!{rel}"
+            except (OSError, zipfile.BadZipFile):
+                continue
+
+    # Nothing found -- surface a clear error naming what we looked for.
+    raise ConfigError(
+        f"event=config_fail could not locate config (tried {resolved!r}, and "
+        f"{rel_names} on sys.path dirs/zips). Set PIPELINE_CONFIG_PATH to override."
+    )
 
 
 def load_config(path: str = "config/pipeline.yaml") -> Config:
@@ -145,18 +200,10 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
     # AND PyYAML is available. The deploy packages a pipeline.json sibling so
     # the cluster path is always dependency-free.
     import json
-    import pathlib
 
-    resolved = _resolve_config_path(path)
+    text, resolved = _read_config_text(path)
 
-    try:
-        text = pathlib.Path(resolved).read_text(encoding="utf-8")
-    except OSError as exc:  # file missing / unreadable
-        raise ConfigError(
-            f"event=config_fail could not read config at {resolved!r}: {exc}"
-        ) from exc
-
-    if resolved.endswith(".json"):
+    if "pipeline.json" in resolved:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
