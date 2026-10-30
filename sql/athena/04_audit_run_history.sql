@@ -11,7 +11,8 @@
 --   run_id string, job string, layer_from string, layer_to string,
 --   table_name string, status string, input_rows bigint, output_rows bigint,
 --   rejected_rows bigint, dq_passed boolean, dq_critical_failed int,
---   started_at timestamp, ended_at timestamp, duration_ms bigint,
+--   started_at string, ended_at string (ISO-8601, sort chronologically; use
+--   from_iso8601_timestamp(...) if you need a real timestamp), duration_ms bigint,
 --   lineage_path string, quality_path string, emr_application_id string,
 --   spark_app_id string
 -- ===========================================================================

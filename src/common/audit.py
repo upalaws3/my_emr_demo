@@ -74,11 +74,18 @@ class AuditRecord:
 # Iceberg DDL for the audit table (design S7.3). Unpartitioned (Finding 6): at
 # POC scale it holds a handful of rows per run and partition-transform semantics
 # differ across Spark/Athena, so the baseline keeps it simple.
+# started_at / ended_at are stored as ISO-8601 STRINGS (not Spark `timestamp`).
+# The AuditRecord fills them from lineage._now_iso() -> "YYYY-MM-DDTHH:MM:SSZ",
+# and Spark infers those Row fields as string. Declaring the columns as
+# `timestamp` caused the Iceberg append() to fail a type check (string into a
+# timestamp column), which _safe_write_audit swallowed -> no audit rows ever
+# landed. ISO-8601 strings sort correctly and Athena can
+# from_iso8601_timestamp(started_at) when a real timestamp is needed.
 _PIPELINE_RUNS_DDL_COLUMNS = (
     "run_id string, job string, layer_from string, layer_to string, "
     "table_name string, status string, input_rows bigint, output_rows bigint, "
     "rejected_rows bigint, dq_passed boolean, dq_critical_failed int, "
-    "started_at timestamp, ended_at timestamp, duration_ms bigint, "
+    "started_at string, ended_at string, duration_ms bigint, "
     "lineage_path string, quality_path string, emr_application_id string, "
     "spark_app_id string"
 )
