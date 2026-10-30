@@ -189,6 +189,27 @@ data "aws_iam_policy_document" "sfn_policy" {
     }
   }
 
+  # --- EventBridge managed rule for the .sync (startJobRun.sync) pattern --
+  # The `arn:aws:states:::emr-serverless:startJobRun.sync` integration makes
+  # Step Functions wait for the EMR job to finish. To do that, Step Functions
+  # creates and manages an EventBridge rule that notifies it on job-state
+  # changes. Without these actions, CreateStateMachine fails with
+  # "is not authorized to create managed-rule". AWS fixes the managed rule's
+  # name for the EMR Serverless integration, so we scope to that exact rule
+  # ARN rather than "*". (Required by every .sync service integration.)
+  statement {
+    sid    = "SfnManagedRuleForEmrSync"
+    effect = "Allow"
+    actions = [
+      "events:PutRule",
+      "events:PutTargets",
+      "events:DescribeRule",
+    ]
+    resources = [
+      "arn:aws:events:${var.region}:${local.account_id}:rule/StepFunctionsGetEventsForEMRServerlessJobRule",
+    ]
+  }
+
   # --- CloudWatch Logs vended-logs delivery (DOCUMENTED Resource=* exception)
   # Step Functions logging_configuration requires these log-delivery actions,
   # and AWS requires them to be Resource="*" -- they do not support resource
