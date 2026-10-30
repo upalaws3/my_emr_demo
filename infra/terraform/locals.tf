@@ -71,6 +71,11 @@ locals {
   # spark.emr-serverless.driverEnv.* / spark.executorEnv.* conf keys) plus the
   # pyFiles ship. Space-separated --conf flags form one SparkSubmitParameters
   # string in the ASL.
+  # The POC data is tiny (tens-to-hundreds of rows/table), so we pin SMALL,
+  # BOUNDED executor sizing and cap dynamic allocation. This keeps a stage well
+  # inside the application maximum_capacity ceiling (so it never trips
+  # ApplicationMaxCapacityExceededException) and keeps billed vCPU-hours minimal
+  # (FinOps). Driver + up to 2 executors * 2 vCPU/8GB each stays small.
   pipeline_spark_params = join(" ", [
     "--conf",
     "spark.submit.pyFiles=${local.jobs_pyfiles}",
@@ -82,6 +87,20 @@ locals {
     "spark.emr-serverless.driverEnv.PIPELINE_MASK_SALT=${var.mask_salt}",
     "--conf",
     "spark.executorEnv.PIPELINE_MASK_SALT=${var.mask_salt}",
+    "--conf",
+    "spark.driver.cores=2",
+    "--conf",
+    "spark.driver.memory=4g",
+    "--conf",
+    "spark.executor.cores=2",
+    "--conf",
+    "spark.executor.memory=4g",
+    "--conf",
+    "spark.dynamicAllocation.enabled=true",
+    "--conf",
+    "spark.dynamicAllocation.minExecutors=1",
+    "--conf",
+    "spark.dynamicAllocation.maxExecutors=2",
   ])
 
   # --- FinOps tag map (design S9) -----------------------------------------

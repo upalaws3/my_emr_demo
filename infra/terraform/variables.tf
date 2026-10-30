@@ -52,22 +52,28 @@ variable "idle_timeout_minutes" {
   default     = 15
 }
 
+# EMR Serverless maximum_capacity = a HARD CEILING, not a reservation. EMR
+# Serverless bills only for resources a job actually consumes (vCPU-hour /
+# GB-hour), so raising the cap does NOT raise cost for the tiny POC data -- it
+# just lets Spark allocate the driver + executors the Iceberg stages need. The
+# original 8 vCPU / 32 GB cap was too low: bronze_to_silver (4-table read + DQ
+# joins + Iceberg write) exhausted it with ApplicationMaxCapacityExceededException.
 variable "max_cpu" {
-  description = "EMR Serverless maximum_capacity cpu (cost ceiling)."
+  description = "EMR Serverless maximum_capacity cpu (cost ceiling, not a reservation)."
   type        = string
-  default     = "8 vCPU"
+  default     = "32 vCPU"
 }
 
 variable "max_memory" {
-  description = "EMR Serverless maximum_capacity memory (cost ceiling)."
+  description = "EMR Serverless maximum_capacity memory (cost ceiling, not a reservation)."
   type        = string
-  default     = "32 GB"
+  default     = "128 GB"
 }
 
 variable "max_disk" {
-  description = "EMR Serverless maximum_capacity disk (cost ceiling)."
+  description = "EMR Serverless maximum_capacity disk (cost ceiling, not a reservation)."
   type        = string
-  default     = "200 GB"
+  default     = "400 GB"
 }
 
 # --- S3 lifecycle day counts (FinOps storage caps, design S9) -------------
