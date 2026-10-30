@@ -90,17 +90,25 @@ def _resolve_config_path(path: str) -> str:
     if override:
         return override
 
-    if pathlib.Path(path).exists():
-        return path
+    # Prefer a JSON sibling of the given path if it exists (dependency-free on
+    # EMR Serverless, where PyYAML is NOT installed). e.g. for
+    # "config/pipeline.yaml" we first look for "config/pipeline.json".
+    given = pathlib.Path(path)
+    json_sibling = given.with_suffix(".json")
+    if json_sibling.exists():
+        return str(json_sibling)
+    if given.exists():
+        return str(given)
 
-    # Walk up from src/common/config_loader.py looking for config/pipeline.yaml.
-    # Covers both the repo layout and the EMR-unzipped layout (where src/ and
-    # config/ are unpacked as siblings into the job's working dir).
+    # Walk up from src/common/config_loader.py looking for config/pipeline.*,
+    # JSON first. Covers both the repo layout and the EMR-unzipped layout (where
+    # src/ and config/ are unpacked as siblings into the job's working dir).
     here = pathlib.Path(__file__).resolve()
     for parent in here.parents:
-        candidate = parent / "config" / "pipeline.yaml"
-        if candidate.exists():
-            return str(candidate)
+        for name in ("pipeline.json", "pipeline.yaml"):
+            candidate = parent / "config" / name
+            if candidate.exists():
+                return str(candidate)
 
     return path
 
@@ -131,11 +139,13 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
         missing a non-empty ``countries`` / ``currencies`` list. Every message
         is tagged ``event=config_fail``.
     """
-    # Lazy imports: keep the module importable on a host without PyYAML and keep
-    # file I/O out of import time.
+    # Lazy imports: keep file I/O out of import time. We parse JSON with the
+    # stdlib (no third-party dep -- critical on EMR Serverless, which does NOT
+    # ship PyYAML) and only fall back to PyYAML when the resolved file is YAML
+    # AND PyYAML is available. The deploy packages a pipeline.json sibling so
+    # the cluster path is always dependency-free.
+    import json
     import pathlib
-
-    import yaml
 
     resolved = _resolve_config_path(path)
 
@@ -146,10 +156,25 @@ def load_config(path: str = "config/pipeline.yaml") -> Config:
             f"event=config_fail could not read config at {resolved!r}: {exc}"
         ) from exc
 
-    try:
-        data = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise ConfigError(f"event=config_fail invalid YAML in {path!r}: {exc}") from exc
+    if resolved.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"event=config_fail invalid JSON in {resolved!r}: {exc}") from exc
+    else:
+        # YAML path (local/dev convenience). PyYAML is only needed here.
+        try:
+            import yaml
+        except ModuleNotFoundError as exc:
+            raise ConfigError(
+                "event=config_fail PyYAML not installed and no pipeline.json found; "
+                f"cannot parse YAML config {resolved!r}. Generate pipeline.json "
+                "(scripts/package_jobs.py does this) or pip install pyyaml."
+            ) from exc
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ConfigError(f"event=config_fail invalid YAML in {resolved!r}: {exc}") from exc
 
     if not isinstance(data, dict):
         raise ConfigError(f"event=config_fail config root in {path!r} is not a mapping")

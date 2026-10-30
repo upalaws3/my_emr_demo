@@ -50,8 +50,35 @@ _SKIP_SUFFIXES = (".pyc",)
 _SKIP_DIR_NAMES = {"__pycache__", ".pytest_cache"}
 
 
+def _generate_config_json() -> pathlib.Path:
+    """Render config/pipeline.yaml -> config/pipeline.json (dependency-free read).
+
+    EMR Serverless does NOT ship PyYAML, so the jobs read a JSON copy of the
+    config at runtime (config_loader prefers pipeline.json). We generate it here
+    on the deploy host -- which DOES have PyYAML in its venv -- and bundle it in
+    the zip. Keeping YAML as the human-edited source + JSON as the shipped
+    artifact means the cluster never needs a third-party parser.
+    """
+    import json
+
+    import yaml  # available on the deploy host (requirements.txt / venv)
+
+    yaml_path = _REPO_ROOT / "config" / "pipeline.yaml"
+    json_path = _REPO_ROOT / "config" / "pipeline.json"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    json_path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    print(f"generated {json_path} from {yaml_path.name}")
+    return json_path
+
+
 def build_zip(out_path: pathlib.Path) -> pathlib.Path:
-    """Zip src/ + data/ + config/ (repo-relative) into ``out_path``."""
+    """Zip src/ + data/ + config/ (repo-relative) into ``out_path``.
+
+    Generates config/pipeline.json first so the shipped config is readable
+    without PyYAML on the EMR Serverless runtime.
+    """
+    _generate_config_json()
+
     if out_path.exists():
         out_path.unlink()
 

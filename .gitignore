@@ -32,3 +32,7 @@ _quality_out/
 Thumbs.db
 .idea/
 .vscode/
+
+# Generated at package time from config/pipeline.yaml (shipped in src.zip, not source)
+config/pipeline.json
+src.zip
