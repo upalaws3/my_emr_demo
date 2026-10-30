@@ -113,18 +113,33 @@ data "aws_iam_policy_document" "emr_job_policy" {
   }
 
   # --- CloudWatch Logs: write to the EMR log group only -----------------
-  # Only CreateLogStream + PutLogEvents, only on the emr log group ARN (+:*).
+  # CreateLogStream + PutLogEvents, scoped to the emr log group ARN (+:*).
   statement {
     sid    = "EmrLogsWrite"
     effect = "Allow"
     actions = [
       "logs:CreateLogStream",
-      "logs:PutLogEvents"
+      "logs:PutLogEvents",
+      "logs:CreateLogGroup",
+      "logs:DescribeLogStreams"
     ]
     resources = [
       aws_cloudwatch_log_group.emr.arn,
       "${aws_cloudwatch_log_group.emr.arn}:*"
     ]
+  }
+
+  # --- CloudWatch Logs: DescribeLogGroups (MUST be Resource="*") ---------
+  # EMR Serverless calls logs:DescribeLogGroups when initializing a job run's
+  # CloudWatch logging. This action does NOT support resource-level scoping, so
+  # AWS requires Resource="*". Without it the job fails with
+  # "Unable to push logs ... not authorized to perform: logs:DescribeLogGroups".
+  # Split into its own statement so the write actions above stay scoped.
+  statement {
+    sid       = "EmrLogsDescribe"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
   }
 }
 
