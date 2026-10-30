@@ -10,7 +10,41 @@ A banking data pipeline that lands 4 source tables in S3 and refines them throug
 
 ---
 
-## 2. Project structure — what is what, where is what
+## 2. Services & technology used
+
+**AWS services**
+
+| Service | Role in this project |
+| --- | --- |
+| **Amazon EMR Serverless** | Runs the PySpark stage jobs (Spark 3.5, emr-7.5.0). No cluster; workers on demand, auto-stop. The compute engine. |
+| **AWS Step Functions** | Orchestrates the 4 stages in sequence as `startJobRun.sync` tasks; single shared failure state gates the DQ halt. |
+| **Amazon S3** | Storage for every layer (one data-lake bucket, prefixes per layer) + a separate Athena-results bucket. |
+| **AWS Glue Data Catalog** | Table catalog — one database per layer (`ocbc_poc_dev_<layer>`); backs the Iceberg catalog and makes tables queryable in Athena. |
+| **Apache Iceberg** (table format on S3) | ACID table format for silver, canonical, gold (schema evolution, time travel). Bronze is plain Parquet. |
+| **Amazon Athena** | Serverless SQL over the gold Iceberg tables; dedicated workgroup (`ocbc-poc-dev-wg`) with enforced results location + encryption. |
+| **AWS KMS** | Customer-managed key encrypting S3 (SSE-KMS), CloudWatch logs, and Athena results. |
+| **Amazon CloudWatch Logs** | Spark driver/executor logs (`/aws/emr-serverless/...`) and Step Functions execution logs (vended logs). Observability surface. |
+| **AWS IAM** | Least-privilege roles: one for the EMR job, one for Step Functions (scoped policies + documented vended-logs exception). |
+| **Amazon VPC (interface + gateway endpoints)** | Private, no-internet network path to AWS APIs (STS, S3, Glue, EMR, Step Functions, Athena, KMS, Logs) — banking-grade posture. |
+| **AWS STS** | Credential/identity for the instance role; account-id discovery for deterministic bucket naming. |
+| **Amazon EC2 + AWS Systems Manager (SSM)** | The deploy/operator host (code checkout, Terraform, CLI); SSM Session Manager for shell access. |
+| **AWS EventBridge** (managed) | Auto-created managed rule that Step Functions uses to wait on EMR `startJobRun.sync` completion. |
+
+**Tooling & languages**
+
+| Tool | Role |
+| --- | --- |
+| **Terraform** | All AWS infrastructure as code (`infra/terraform/`); authored locally, applied from the EC2 host. |
+| **Python 3.11+ / PySpark** | The 4 transition jobs + shared modules + the stdlib data generator. |
+| **Git / GitHub** | Source of truth (`github.com/upalaws3/my_emr_demo`). |
+| **Custom lightweight lineage** (JSON → S3 + Glue) | In-house lineage capture — no OpenLineage/Marquez in the baseline (a planned next step). |
+| **In-Spark DQ (Great-Expectations-style)** | Config-driven expectations in `src/common/quality.py` — not the GE library itself (also a planned next step). |
+
+**Not used in the baseline (candidates for later):** OpenLineage/Marquez, the Great Expectations library, AWS Lake Formation (column-level policies), MWAA/Airflow, a cost dashboard (QuickSight/CUR).
+
+---
+
+## 3. Project structure — what is what, where is what
 
 | Path | What lives here |
 | --- | --- |
@@ -27,7 +61,7 @@ A banking data pipeline that lands 4 source tables in S3 and refines them throug
 
 ---
 
-## 3. The flow — one bucket, prefixes per layer
+## 4. The flow — one bucket, prefixes per layer
 
 There are **2 S3 buckets**: the data lake (all layers are *prefixes* inside it) and an Athena-results bucket. There is **no EMR cluster** — EMR Serverless spins workers on demand and auto-stops (the FinOps headline).
 
@@ -49,7 +83,7 @@ Each layer has its own Glue database (`ocbc_poc_dev_<layer>`). Cross-cutting pre
 
 ---
 
-## 4. The 4 tables (landing)
+## 5. The 4 tables (landing)
 
 | Table | Format | Grain | PII columns |
 | --- | --- | --- | --- |
@@ -62,7 +96,7 @@ Relationships: `customers 1—* accounts 1—* cards`, and `accounts 1—* trans
 
 ---
 
-## 5. Data quality gate (the "trust" story)
+## 6. Data quality gate (the "trust" story)
 
 `bronze_to_silver` runs config-driven expectations (not-null, uniqueness, referential integrity, value ranges, allowed sets, row-count). Each rule has a **severity**:
 - `critical` -> a failure **halts the whole pipeline** at silver (Step Functions routes to a single `PipelineFailed` state).
@@ -72,7 +106,7 @@ Results are written as JSON to `quality/<run_id>/`. To **demo the gate firing on
 
 ---
 
-## 6. PII masking (the "security" story) — in canonical
+## 7. PII masking (the "security" story) — in canonical
 
 `silver_to_canonical` applies, per the config masking catalog:
 - `national_id` -> **SHA-256(salt + value)** token (deterministic — same person, same token across runs)
@@ -86,7 +120,7 @@ Salt precedence: `PIPELINE_MASK_SALT` env (set by Terraform) > `config.masking.s
 
 ---
 
-## 7. Gold layer — the business value (lead with this)
+## 8. Gold layer — the business value (lead with this)
 
 Gold is built from **canonical** (already masked) as **3 marts**, each its own Iceberg table in `ocbc_poc_dev_gold`:
 
@@ -101,7 +135,7 @@ Gold is built from **canonical** (already masked) as **3 marts**, each its own I
 
 ---
 
-## 8. FinOps story (this customer cares)
+## 9. FinOps story (this customer cares)
 
 - **EMR Serverless**: no idle clusters, pay only for vCPU-hours a job uses, **auto-stops after 15 min idle**. Show `billedResourceUtilization` on a job run.
 - **Hard capacity ceiling** (32 vCPU/128 GB) caps runaway spend; small bounded executors keep usage minimal.
@@ -110,7 +144,7 @@ Gold is built from **canonical** (already masked) as **3 marts**, each its own I
 
 ---
 
-## 9. Security story
+## 10. Security story
 
 - **SSE-KMS** (customer-managed key) on all S3; **TLS-only + account-only** bucket policies (no public access).
 - **Least-privilege IAM**: separate scoped roles for the EMR job and for Step Functions.
@@ -119,7 +153,7 @@ Gold is built from **canonical** (already masked) as **3 marts**, each its own I
 
 ---
 
-## 10. How a run actually executes (so you can narrate live)
+## 11. How a run actually executes (so you can narrate live)
 
 1. **Step Functions** `ocbc-poc-dev-medallion-pipeline` runs 4 stages in sequence, each an **EMR Serverless `startJobRun.sync`** task.
 2. The **execution name = run_id**, threaded into every job (`--run-id`), every lineage/quality/audit record — one execution is fully traceable end to end.
@@ -130,7 +164,7 @@ Gold is built from **canonical** (already masked) as **3 marts**, each its own I
 
 ---
 
-## 11. Operational cheat-sheet
+## 12. Operational cheat-sheet
 
 | Task | Command (from `infra/terraform`) |
 | --- | --- |
@@ -144,7 +178,7 @@ Gold is built from **canonical** (already masked) as **3 marts**, each its own I
 
 ---
 
-## 12. Likely customer questions — crisp answers
+## 13. Likely customer questions — crisp answers
 
 - *"Where's the cluster?"* -> EMR Serverless, no cluster — workers on demand, auto-stop, zero idle cost.
 - *"Why a canonical layer?"* -> to guarantee gold never sees unmasked PII, and to conform data before business logic.
