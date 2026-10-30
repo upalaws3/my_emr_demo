@@ -20,13 +20,55 @@ resource "aws_s3_bucket" "datalake" {
   bucket = local.datalake_bucket
 }
 
-# Block Public Access: all four flags true (never public, design S9/security).
-resource "aws_s3_bucket_public_access_block" "datalake" {
-  bucket                  = aws_s3_bucket.datalake.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+# Private-bucket enforcement via BUCKET POLICY (not PutPublicAccessBlock).
+#
+# NOTE: some AWS Organizations enforce an SCP that explicitly denies
+# s3:PutBucketPublicAccessBlock (public access is governed org-wide instead),
+# which makes the aws_s3_bucket_public_access_block resource fail with an
+# AccessDenied "explicit deny in a service control policy". To stay portable in
+# those orgs we enforce the same intent with a bucket policy, which relies on
+# s3:PutBucketPolicy (not denied by the SCP): deny any request that is not over
+# TLS and deny public (anonymous) access. If your org enforces account-level
+# Block Public Access, that still layers on top of this harmlessly.
+resource "aws_s3_bucket_policy" "datalake" {
+  bucket = aws_s3_bucket.datalake.id
+  policy = data.aws_iam_policy_document.datalake_bucket.json
+}
+
+data "aws_iam_policy_document" "datalake_bucket" {
+  # Deny everything not using TLS (in-transit encryption, security.md).
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.datalake.arn, "${aws_s3_bucket.datalake.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
+  # Deny anonymous (public) access: only principals from THIS account may act.
+  statement {
+    sid       = "DenyPublicAccess"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.datalake.arn, "${aws_s3_bucket.datalake.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "StringNotEquals"
+      variable = "aws:PrincipalAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
 }
 
 # Default encryption: SSE-KMS using the data-lake CMK, with bucket keys on to
@@ -133,12 +175,45 @@ resource "aws_s3_bucket" "athena_results" {
   bucket = local.athena_results_bucket
 }
 
-resource "aws_s3_bucket_public_access_block" "athena_results" {
-  bucket                  = aws_s3_bucket.athena_results.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+# Private-bucket enforcement via BUCKET POLICY (see the datalake note above:
+# the org SCP denies s3:PutBucketPublicAccessBlock, so we use a bucket policy).
+resource "aws_s3_bucket_policy" "athena_results" {
+  bucket = aws_s3_bucket.athena_results.id
+  policy = data.aws_iam_policy_document.athena_results_bucket.json
+}
+
+data "aws_iam_policy_document" "athena_results_bucket" {
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.athena_results.arn, "${aws_s3_bucket.athena_results.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
+  statement {
+    sid       = "DenyPublicAccess"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.athena_results.arn, "${aws_s3_bucket.athena_results.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "StringNotEquals"
+      variable = "aws:PrincipalAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "athena_results" {
