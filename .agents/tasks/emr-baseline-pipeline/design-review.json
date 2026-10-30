@@ -1,0 +1,54 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "MEDIUM",
+      "title": "--inject-dq-failure can be erased by the 'drop exact duplicates' step",
+      "where": "\u00a76.2 (drops exact duplicates, then dedupe on PK) vs \u00a76.5 / \u00a714 (injected rows share transaction_id AND _ingested_at)",
+      "problem": "\u00a76.2 runs a full-row distinct() before the PK dedupe. If the two injected rows are identical on every column (never ruled out, since only transaction_id and _ingested_at are pinned), distinct() collapses them before the uniqueness check runs and the gate does NOT fire. The 'deterministic' demo is therefore non-deterministic.",
+      "fix": "Pin that the two injected rows are identical on transaction_id and _ingested_at but DIFFER in at least one non-key column (e.g. amount 100.00 vs 100.01) so the full-row distinct() keeps both and only the PK-uniqueness expectation catches them. Add the sentence to \u00a76.5 and \u00a714."
+    },
+    {
+      "id": 2,
+      "severity": "MEDIUM",
+      "title": "Bronze _rejected/ side-path and reject detection are referenced but unspecified",
+      "where": "\u00a76.1 (_rejected/ with reason column, counted in lineage), \u00a77.1 metrics.rejected_rows, \u00a77.3 audit rejected_rows, \u00a710 schema-cast row",
+      "problem": "The reject path's format, the reason-column schema, the per-row cast-failure detection rule (a Spark cast yields null, not an exception), and how input/output/rejected row counts relate are all left to the coder. Two coders would implement incompatibly and rejected_rows would mean different things.",
+      "fix": "Add a 'Bronze reject contract' paragraph to \u00a76.1: detection = non-empty source value casting to null on a typed column; write rejects as Parquet with original string columns plus a _reject_reason string ('<column>:uncastable', semicolon-joined); define input_rows = output_rows + rejected_rows."
+    },
+    {
+      "id": 3,
+      "severity": "MEDIUM",
+      "title": "Gold customer_360 aggregation join path risks fan-out and wrong counts",
+      "where": "\u00a76.4 Mart 1 customer_360 (account_count, card_count via accounts, txn_count, last_txn_at)",
+      "problem": "cards joins to customers only through accounts, and the grain is one row per customer. A flat customers-accounts-cards-transactions join fans out rows so plain COUNT(txn_count) and MAX(last_txn_at) are wrong. The design mixes COUNT(DISTINCT ...) for some columns and plain COUNT for others without specifying the join strategy.",
+      "fix": "Specify that customer_360 is built from separate per-customer aggregations joined on customer_id (accounts metrics from accounts; card-count from accounts\u22c8cards; txn metrics from accounts\u22c8transactions), NOT one flat join before aggregating."
+    },
+    {
+      "id": 4,
+      "severity": "MEDIUM",
+      "title": "landing->bronze lineage glue_table field is inconsistent with uncataloged landing",
+      "where": "\u00a77.1 lineage shape (input carries glue_table) vs \u00a72.3 (landing is not cataloged; jobs do not write tables into the landing DB)",
+      "problem": "The landing_to_bronze lineage input is the landing dataset, which has no Glue table, but \u00a77.1 only shows the bronze_to_silver record. Whether glue_table is required, null, or omitted for the landing input is unspecified, so the coder guesses when serializing landing->bronze lineage.",
+      "fix": "State in \u00a77.1 that glue_table is optional per input/output and omitted (or null) for uncataloged datasets (the landing input); add a landing->bronze example input without a glue_table key."
+    },
+    {
+      "id": 5,
+      "severity": "NIT",
+      "title": "AuditRecord optional-vs-required fields not defined for the DQ-failure path",
+      "where": "\u00a75.5 AuditRecord / \u00a77.3 fields vs \u00a76.2a DQ-failure write (trailing ...)",
+      "problem": "On the gate-failure path the silver write never happens, so output_rows, lineage_path, emr/spark app ids have no value. The \u00a76.2a snippet trails off with '...'. If a coder marks these required, the audit write crashes on the exact path it exists to record.",
+      "fix": "Mark output_rows, rejected_rows, lineage_path, emr_application_id, spark_app_id as Optional with default None, and note input_rows is populated while post-write fields are None on the DQ-failure/pre-write-fatal paths."
+    },
+    {
+      "id": 6,
+      "severity": "NIT",
+      "title": "Glue type mapping for register_glue_table columns is not pinned",
+      "where": "\u00a75.3 register_glue_table(columns: list[tuple[str, glue_type]]) and \u00a76.1 ((name, glue_type) from schema_defs)",
+      "problem": "\u00a73 bronze types are Spark/SQL spellings; Glue StorageDescriptor.Columns needs Hive/Glue type names. The \u00a73-type -> Glue-type mapping is not stated (e.g. int vs integer), so the coder invents it.",
+      "fix": "Add a one-line mapping (string->string, int->int, decimal(p,s)->decimal(p,s), date->date, timestamp->timestamp) and state schema_defs stores the Glue-compatible type string directly so no translation is needed."
+    }
+  ],
+  "reviewDoc": "c:\\Upal\\Projects\\OCBC-Sample-project\\.agents\\tasks\\emr-baseline-pipeline\\design-review.md"
+}

@@ -1,0 +1,12 @@
+{
+  "verdict": "APPROVED",
+  "summary": "The EMR baseline pipeline faithfully implements the authoritative design across all three FEATs (scaffold/common modules, data path/jobs, and Terraform/SQL/docs), and the mandatory local gate passes: compileall clean, generator in-range with PII populated, pytest 34 passed, and run_local_checks exits 0 with terraform/Spark SKIPPED. Every reviewed contract — §6.2a DQ call sequence, single shared PipelineFailed Fail state, bronze reject contract, per-table lineage/quality/audit keying, audit grain + status enum + table_name, canonical in-place masking + tokenize_id, customer_360 per-customer-aggregation build, Terraform security/FinOps, and Athena column fidelity — is correct.",
+  "findings": [
+    {
+      "severity": "NIT",
+      "location": "src/jobs/silver_to_canonical.py:run (and _job_common.bootstrap)",
+      "detail": "Design §4/§10 state the masking salt is resolved 'at startup ... before any Spark work' and 'fails fast before any Spark work.' In run(), _job_common.bootstrap() builds the Spark session first and resolve_salt(cfg) is called afterward, so a Spark session is constructed before the salt precedence check. The fail-fast guarantee is substantively preserved because config_loader.load_config() (called inside bootstrap) already enforces masking.salt as a required key before Spark session construction per §10's required-keys list; only the env-override-vs-config precedence step runs post-bootstrap. No functional defect, but the ordering differs from the literal 'before any Spark work' wording.",
+      "fix": "Optionally call resolve_salt(cfg) before build_spark — e.g. load config and resolve the salt in run() prior to bootstrap(), or have bootstrap accept a pre-Spark validation hook — so the hard salt fail precedes Spark session construction and matches the §4/§10 wording exactly. Low priority for a POC."
+    }
+  ]
+}
